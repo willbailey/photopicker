@@ -15,17 +15,37 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 @TargetApi(Build.VERSION_CODES.HONEYCOMB_MR1)
 public class MediaPickerItemView extends FrameLayout {
 
   private static final String TAG = MediaPickerItemView.class.getSimpleName();
+
   private static final int PICKED_COLOR = Color.argb(100, 0, 0, 255);
-  private static final ExecutorService LOADING_EXECUTOR = Executors.newFixedThreadPool(
-      Runtime.getRuntime().availableProcessors() / 2);
-  private static final int CACHE_SIZE = (int) (Runtime.getRuntime().maxMemory() / 4);
+  private static final BlockingQueue<Runnable> WORK_QUEUE = new LinkedBlockingDeque<Runnable>() {
+    @Override
+    public boolean offer(Runnable runnable) {
+      return super.offerFirst(runnable);
+    }
+
+    @Override
+    public Runnable remove() {
+      return super.removeFirst();
+    }
+  };
+  private static final int THREADS = Runtime.getRuntime().availableProcessors() / 2;
+  private static final ExecutorService LOADING_EXECUTOR = new ThreadPoolExecutor(
+      THREADS,
+      THREADS,
+      0L,
+      TimeUnit.MILLISECONDS,
+      WORK_QUEUE);
+  private static final int CACHE_SIZE = (int) (Runtime.getRuntime().maxMemory() / 8);
   private static final LruCache<Integer, Bitmap> BITMAP_CACHE =
       new LruCache<Integer, Bitmap>(CACHE_SIZE){
         protected int sizeOf(Integer key, Bitmap bitmap) {
@@ -55,8 +75,7 @@ public class MediaPickerItemView extends FrameLayout {
     super(context, attrs, defStyleAttr);
 
     mBitmapOptions = new BitmapFactory.Options();
-    mBitmapOptions.inDensity = 2;
-    mBitmapOptions.inTargetDensity = 1;
+    mBitmapOptions.inSampleSize = 2;
 
     ViewGroup root = (ViewGroup) LayoutInflater.from(context).inflate(
         R.layout.media_picker_item_view, this, false);
