@@ -8,10 +8,8 @@ import android.graphics.Color;
 import android.os.Build;
 import android.provider.MediaStore;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.util.LruCache;
 import android.view.LayoutInflater;
-import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 
@@ -21,10 +19,8 @@ import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-@TargetApi(Build.VERSION_CODES.HONEYCOMB_MR1)
+@TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
 public class MediaPickerItemView extends FrameLayout {
-
-  private static final String TAG = MediaPickerItemView.class.getSimpleName();
 
   private static final int PICKED_COLOR = Color.argb(100, 0, 0, 255);
   private static final BlockingQueue<Runnable> WORK_QUEUE = new LinkedBlockingDeque<Runnable>() {
@@ -38,7 +34,7 @@ public class MediaPickerItemView extends FrameLayout {
       return super.removeFirst();
     }
   };
-  private static final int THREADS = Runtime.getRuntime().availableProcessors() / 2;
+  private static final int THREADS = Math.round(Runtime.getRuntime().availableProcessors() / 2f);
   private static final ExecutorService LOADING_EXECUTOR = new ThreadPoolExecutor(
       THREADS,
       THREADS,
@@ -46,20 +42,24 @@ public class MediaPickerItemView extends FrameLayout {
       TimeUnit.MILLISECONDS,
       WORK_QUEUE);
   private static final int CACHE_SIZE = (int) (Runtime.getRuntime().maxMemory() / 8);
-  private static final LruCache<Integer, Bitmap> BITMAP_CACHE =
+
+  private static final LruCache<Integer, Bitmap> SMALL_THUMBNAIL_BITMAP_CACHE =
       new LruCache<Integer, Bitmap>(CACHE_SIZE){
         protected int sizeOf(Integer key, Bitmap bitmap) {
-          Log.d(
-              TAG,
-              "kb: " + bitmap.getByteCount() / 1024 +
-                  " w: " + bitmap.getWidth() +
-                  " h: " + bitmap.getHeight());
+          return bitmap.getByteCount();
+        }
+      };
+
+  private static final LruCache<Integer, Bitmap> LARGE_THUMBNAIL_BITMAP_CACHE =
+      new LruCache<Integer, Bitmap>(CACHE_SIZE){
+        protected int sizeOf(Integer key, Bitmap bitmap) {
           return bitmap.getByteCount();
         }
       };
 
   private final ImageView mImage;
-  private final BitmapFactory.Options mBitmapOptions;
+  private final BitmapFactory.Options mLargeThumbnailBitmapOptions;
+  private final BitmapFactory.Options mSmallThumbnailBitmapOptions;
   private int mId;
   private Medium mMedium;
 
@@ -74,15 +74,15 @@ public class MediaPickerItemView extends FrameLayout {
   public MediaPickerItemView(Context context, AttributeSet attrs, int defStyleAttr) {
     super(context, attrs, defStyleAttr);
 
-    mBitmapOptions = new BitmapFactory.Options();
-    mBitmapOptions.inSampleSize = 2;
+    mLargeThumbnailBitmapOptions = new BitmapFactory.Options();
+    mLargeThumbnailBitmapOptions.inSampleSize = 2;
+    mSmallThumbnailBitmapOptions = new BitmapFactory.Options();
+    mSmallThumbnailBitmapOptions.inSampleSize = 6;
 
-    ViewGroup root = (ViewGroup) LayoutInflater.from(context).inflate(
+    mImage = (ImageView) LayoutInflater.from(context).inflate(
         R.layout.media_picker_item_view, this, false);
 
-    mImage = (ImageView) root.findViewById(R.id.image);
-
-    addView(root);
+    addView(mImage);
   }
 
   public void bind(final Medium medium) {
@@ -91,34 +91,68 @@ public class MediaPickerItemView extends FrameLayout {
     }
     mId = medium.id;
     mMedium = medium;
+    mImage.setVisibility(INVISIBLE);
+    loadThumbnails(medium);
+  }
 
-    mImage.setImageBitmap(null);
-
-    if (BITMAP_CACHE.get(medium.id) != null) {
-      mImage.setImageBitmap(BITMAP_CACHE.get(medium.id));
+  private void loadThumbnails(final Medium medium) {
+    mImage.setImageBitmap(SMALL_THUMBNAIL_BITMAP_CACHE.get(medium.id));
+    mImage.setVisibility(VISIBLE);
+    if (LARGE_THUMBNAIL_BITMAP_CACHE.get(medium.id) != null) {
+      mImage.setImageBitmap(LARGE_THUMBNAIL_BITMAP_CACHE.get(medium.id));
+      mImage.setVisibility(VISIBLE);
+    } else if (SMALL_THUMBNAIL_BITMAP_CACHE.get(medium.id) != null) {
+      LOADING_EXECUTOR.submit(new Runnable() {
+        @Override
+        public void run() {
+          loadLargeThumbnail(medium);
+        }
+      });
     } else {
       LOADING_EXECUTOR.submit(new Runnable() {
         @Override
         public void run() {
-          final Bitmap thumb = MediaStore.Images.Thumbnails.getThumbnail(
-              getContext().getContentResolver(),
-              medium.id,
-              MediaStore.Video.Thumbnails.MINI_KIND,
-              mBitmapOptions);
-          BITMAP_CACHE.put(medium.id, thumb);
-
-          post(new Runnable() {
-            @Override
-            public void run() {
-              if (mId == medium.id) {
-                mImage.setImageBitmap(thumb);
-              }
-            }
-          });
-
+          loadSmallThumbnail(medium);
+          loadLargeThumbnail(medium);
         }
       });
     }
+  }
+
+  private void loadSmallThumbnail(final Medium medium) {
+    final Bitmap smallThumb = MediaStore.Images.Thumbnails.getThumbnail(
+        getContext().getContentResolver(),
+        medium.id,
+        MediaStore.Video.Thumbnails.MINI_KIND,
+        mSmallThumbnailBitmapOptions);
+    SMALL_THUMBNAIL_BITMAP_CACHE.put(medium.id, smallThumb);
+    post(new Runnable() {
+      @Override
+      public void run() {
+        if (mId == medium.id) {
+          mImage.setImageBitmap(smallThumb);
+          mImage.setVisibility(VISIBLE);
+        }
+      }
+    });
+  }
+
+  private void loadLargeThumbnail(final Medium medium) {
+    final Bitmap thumb = MediaStore.Images.Thumbnails.getThumbnail(
+        getContext().getContentResolver(),
+        medium.id,
+        MediaStore.Video.Thumbnails.MINI_KIND,
+        mLargeThumbnailBitmapOptions);
+    LARGE_THUMBNAIL_BITMAP_CACHE.put(medium.id, thumb);
+    post(new Runnable() {
+      @Override
+      public void run() {
+        if (mId == medium.id) {
+          mImage.setImageBitmap(thumb);
+          mImage.setVisibility(VISIBLE);
+        }
+      }
+    });
   }
 
   public void setPicked(boolean picked) {
