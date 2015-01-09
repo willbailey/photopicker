@@ -161,7 +161,6 @@ public class MediaPickerItemView extends FrameLayout {
     } else {
       mImage.clearColorFilter();
     }
-    mImage.invalidate();
   }
 
   public Medium getMedium() {

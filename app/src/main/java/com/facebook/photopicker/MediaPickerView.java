@@ -6,6 +6,7 @@ import android.app.LoaderManager;
 import android.content.Context;
 import android.content.CursorLoader;
 import android.content.Loader;
+import android.database.ContentObserver;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
@@ -21,13 +22,11 @@ import android.widget.GridView;
 @TargetApi(Build.VERSION_CODES.HONEYCOMB)
 public class MediaPickerView extends FrameLayout implements LoaderManager.LoaderCallbacks<Cursor> {
 
+  private static int LOADER_ID = 0;
+
   String[] MEDIA_PROJECTION = {
       MediaStore.Files.FileColumns._ID,
-      MediaStore.Files.FileColumns.DATA,
-      MediaStore.Files.FileColumns.DATE_ADDED,
       MediaStore.Files.FileColumns.MEDIA_TYPE,
-      MediaStore.Files.FileColumns.MIME_TYPE,
-      MediaStore.Files.FileColumns.TITLE
   };
 
   private final CursorAdapter mAdapter;
@@ -50,8 +49,17 @@ public class MediaPickerView extends FrameLayout implements LoaderManager.Loader
     mAdapter = new MediaPickerAdapter(getActivity(), null, true);
     gridView.setAdapter(mAdapter);
 
-    LoaderManager loaderManager = getActivity().getLoaderManager();
-    loaderManager.initLoader(0, null, this);
+    final LoaderManager loaderManager = getActivity().getLoaderManager();
+    loaderManager.initLoader(LOADER_ID, null, this);
+
+    context.getContentResolver().registerContentObserver(
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false,
+        new ContentObserver(getHandler()) {
+          @Override
+          public void onChange(boolean selfChange) {
+            loaderManager.getLoader(LOADER_ID).forceLoad();
+          }
+        });
   }
 
   private Activity getActivity() {
@@ -62,9 +70,6 @@ public class MediaPickerView extends FrameLayout implements LoaderManager.Loader
   public Loader<Cursor> onCreateLoader(int id, Bundle args) {
     String selection = MediaStore.Files.FileColumns.MEDIA_TYPE + "="
         + MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE;
-//        + " OR "
-//        + MediaStore.Files.FileColumns.MEDIA_TYPE + "="
-//        + MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO;
 
     Uri queryUri = MediaStore.Files.getContentUri("external");
 
