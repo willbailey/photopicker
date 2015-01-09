@@ -75,9 +75,9 @@ public class MediaPickerItemView extends FrameLayout {
     super(context, attrs, defStyleAttr);
 
     mLargeThumbnailBitmapOptions = new BitmapFactory.Options();
-    mLargeThumbnailBitmapOptions.inSampleSize = 2;
+    mLargeThumbnailBitmapOptions.inSampleSize = 1;
     mSmallThumbnailBitmapOptions = new BitmapFactory.Options();
-    mSmallThumbnailBitmapOptions.inSampleSize = 6;
+    mSmallThumbnailBitmapOptions.inSampleSize = 4;
 
     mImage = (ImageView) LayoutInflater.from(context).inflate(
         R.layout.media_picker_item_view, this, false);
