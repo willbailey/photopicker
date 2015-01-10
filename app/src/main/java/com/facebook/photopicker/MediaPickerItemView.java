@@ -3,63 +3,37 @@ package com.facebook.photopicker;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.os.Build;
-import android.provider.MediaStore;
 import android.util.AttributeSet;
-import android.util.LruCache;
+import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingDeque;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.HashMap;
+import java.util.Map;
 
 @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
-public class MediaPickerItemView extends FrameLayout {
+public class MediaPickerItemView extends FrameLayout implements ThumbnailLoaderListener {
+
+  private static Map<Integer, LayoutParams> PARAMS_CACHE = new HashMap<Integer,LayoutParams>();
+  private final PhotoFrame mFrame;
+
+  private static FrameLayout.LayoutParams getCachedLayoutParams(int dim) {
+    LayoutParams params = PARAMS_CACHE.get(dim);
+    if (params == null) {
+      params = new LayoutParams(dim, dim);
+      params.gravity = Gravity.CENTER;
+      PARAMS_CACHE.put(dim, params);
+    }
+    return params;
+  }
 
   private static final int PICKED_COLOR = Color.argb(100, 0, 0, 255);
-  private static final BlockingQueue<Runnable> WORK_QUEUE = new LinkedBlockingDeque<Runnable>() {
-    @Override
-    public boolean offer(Runnable runnable) {
-      return super.offerFirst(runnable);
-    }
-
-    @Override
-    public Runnable remove() {
-      return super.removeFirst();
-    }
-  };
-  private static final int THREADS = Math.round(Runtime.getRuntime().availableProcessors() / 2f);
-  private static final ExecutorService LOADING_EXECUTOR = new ThreadPoolExecutor(
-      THREADS,
-      THREADS,
-      0L,
-      TimeUnit.MILLISECONDS,
-      WORK_QUEUE);
-  private static final int CACHE_SIZE = (int) (Runtime.getRuntime().maxMemory() / 8);
-
-  private static final LruCache<Integer, Bitmap> SMALL_THUMBNAIL_BITMAP_CACHE =
-      new LruCache<Integer, Bitmap>(CACHE_SIZE){
-        protected int sizeOf(Integer key, Bitmap bitmap) {
-          return bitmap.getByteCount();
-        }
-      };
-
-  private static final LruCache<Integer, Bitmap> LARGE_THUMBNAIL_BITMAP_CACHE =
-      new LruCache<Integer, Bitmap>(CACHE_SIZE){
-        protected int sizeOf(Integer key, Bitmap bitmap) {
-          return bitmap.getByteCount();
-        }
-      };
 
   private final ImageView mImage;
-  private final BitmapFactory.Options mLargeThumbnailBitmapOptions;
-  private final BitmapFactory.Options mSmallThumbnailBitmapOptions;
   private int mId;
   private Medium mMedium;
 
@@ -73,86 +47,22 @@ public class MediaPickerItemView extends FrameLayout {
 
   public MediaPickerItemView(Context context, AttributeSet attrs, int defStyleAttr) {
     super(context, attrs, defStyleAttr);
-
-    mLargeThumbnailBitmapOptions = new BitmapFactory.Options();
-    mLargeThumbnailBitmapOptions.inSampleSize = 1;
-    mSmallThumbnailBitmapOptions = new BitmapFactory.Options();
-    mSmallThumbnailBitmapOptions.inSampleSize = 4;
-
-    mImage = (ImageView) LayoutInflater.from(context).inflate(
+    setWillNotDraw(false);
+    ViewGroup container = (ViewGroup) LayoutInflater.from(context).inflate(
         R.layout.media_picker_item_view, this, false);
-
-    addView(mImage);
+    mImage = (ImageView) container.findViewById(R.id.image);
+    mFrame = (PhotoFrame) container.findViewById(R.id.frame);
+    addView(container);
   }
 
-  public void bind(final Medium medium) {
+  public void bind(final Medium medium, ThumbnailLoader thumbnailLoader) {
     if (mId == medium.id) {
       return;
     }
     mId = medium.id;
     mMedium = medium;
     mImage.setVisibility(INVISIBLE);
-    loadThumbnails(medium);
-  }
-
-  private void loadThumbnails(final Medium medium) {
-    mImage.setImageBitmap(SMALL_THUMBNAIL_BITMAP_CACHE.get(medium.id));
-    mImage.setVisibility(VISIBLE);
-    if (LARGE_THUMBNAIL_BITMAP_CACHE.get(medium.id) != null) {
-      mImage.setImageBitmap(LARGE_THUMBNAIL_BITMAP_CACHE.get(medium.id));
-      mImage.setVisibility(VISIBLE);
-    } else if (SMALL_THUMBNAIL_BITMAP_CACHE.get(medium.id) != null) {
-      LOADING_EXECUTOR.submit(new Runnable() {
-        @Override
-        public void run() {
-          loadLargeThumbnail(medium);
-        }
-      });
-    } else {
-      LOADING_EXECUTOR.submit(new Runnable() {
-        @Override
-        public void run() {
-          loadSmallThumbnail(medium);
-          loadLargeThumbnail(medium);
-        }
-      });
-    }
-  }
-
-  private void loadSmallThumbnail(final Medium medium) {
-    final Bitmap smallThumb = MediaStore.Images.Thumbnails.getThumbnail(
-        getContext().getContentResolver(),
-        medium.id,
-        MediaStore.Video.Thumbnails.MINI_KIND,
-        mSmallThumbnailBitmapOptions);
-    SMALL_THUMBNAIL_BITMAP_CACHE.put(medium.id, smallThumb);
-    post(new Runnable() {
-      @Override
-      public void run() {
-        if (mId == medium.id) {
-          mImage.setImageBitmap(smallThumb);
-          mImage.setVisibility(VISIBLE);
-        }
-      }
-    });
-  }
-
-  private void loadLargeThumbnail(final Medium medium) {
-    final Bitmap thumb = MediaStore.Images.Thumbnails.getThumbnail(
-        getContext().getContentResolver(),
-        medium.id,
-        MediaStore.Video.Thumbnails.MINI_KIND,
-        mLargeThumbnailBitmapOptions);
-    LARGE_THUMBNAIL_BITMAP_CACHE.put(medium.id, thumb);
-    post(new Runnable() {
-      @Override
-      public void run() {
-        if (mId == medium.id) {
-          mImage.setImageBitmap(thumb);
-          mImage.setVisibility(VISIBLE);
-        }
-      }
-    });
+    thumbnailLoader.loadThumbnail(medium, this);
   }
 
   public void setPicked(boolean picked) {
@@ -161,9 +71,26 @@ public class MediaPickerItemView extends FrameLayout {
     } else {
       mImage.clearColorFilter();
     }
+    mImage.invalidate();
+  }
+
+  @Override
+  public void onThumbnailLoaded(Medium medium, boolean lowResolution, Bitmap bitmap) {
+    if (medium.id != mId) {
+      return;
+    }
+    mImage.setVisibility(VISIBLE);
+    mImage.setImageBitmap(bitmap);
+    invalidate();
   }
 
   public Medium getMedium() {
     return mMedium;
   }
+
+  public void setDimensions(int dim) {
+    mImage.setLayoutParams(getCachedLayoutParams(dim));
+    mFrame.setLayoutParams(getCachedLayoutParams(dim));
+  }
+
 }

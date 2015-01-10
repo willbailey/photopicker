@@ -6,11 +6,4 @@
   tools:context=".MainActivity"
   >
 
-  <com.facebook.photopicker.MediaPickerView
-    android:id="@+id/media_picker_view"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    />
-
-
 </FrameLayout>

@@ -3,7 +3,6 @@ package com.facebook.photopicker;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.LoaderManager;
-import android.content.Context;
 import android.content.CursorLoader;
 import android.content.Loader;
 import android.database.ContentObserver;
@@ -11,59 +10,67 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.provider.MediaStore;
-import android.util.AttributeSet;
 import android.view.LayoutInflater;
-import android.view.ViewGroup;
+import android.view.View;
 import android.widget.CursorAdapter;
-import android.widget.FrameLayout;
 import android.widget.GridView;
 
 @TargetApi(Build.VERSION_CODES.HONEYCOMB)
-public class MediaPickerView extends FrameLayout implements LoaderManager.LoaderCallbacks<Cursor> {
+public class MediaPickerController implements LoaderManager.LoaderCallbacks<Cursor> {
 
   private static int LOADER_ID = 0;
+  private final GridView mGridView;
+  private final Handler mHandler;
 
   String[] MEDIA_PROJECTION = {
       MediaStore.Files.FileColumns._ID,
       MediaStore.Files.FileColumns.MEDIA_TYPE,
   };
 
+  public static MediaPickerController create(Activity activity) {
+    MediaPickerConfig config = new MediaPickerConfig();
+    config.thumbnailLoader = new DefaultThumbnailLoader(activity);
+    return MediaPickerController.create(config, activity);
+  }
+
+  public static MediaPickerController create(MediaPickerConfig config, Activity activity) {
+    return new MediaPickerController(config, activity);
+  }
+
+  private final ThumbnailLoader mThumbnailLoader;
+  private final Activity mActivity;
+  private final View mView;
   private final CursorAdapter mAdapter;
+  private boolean mMultiSelect;
 
-  public MediaPickerView(Context context) {
-    this(context, null);
+  private MediaPickerController(MediaPickerConfig mediaPickerConfig, Activity activity) {
+    mThumbnailLoader = mediaPickerConfig.thumbnailLoader;
+    mMultiSelect = mediaPickerConfig.multiSelect;
+    mActivity = activity;
+    mView = LayoutInflater.from(activity).inflate(R.layout.media_picker_view, null, false);
+    mHandler = mView.getHandler();
+    mGridView  = (GridView) mView.findViewById(R.id.grid_view);
+    mAdapter = new MediaPickerAdapter(mActivity, null, mThumbnailLoader, mGridView);
+    mGridView.setAdapter(mAdapter);
   }
 
-  public MediaPickerView(Context context, AttributeSet attrs) {
-    this(context, attrs, 0);
+  public View getView() {
+    return mView;
   }
 
-  public MediaPickerView(Context context, AttributeSet attrs, int defStyleAttr) {
-    super(context, attrs, defStyleAttr);
-    ViewGroup container =
-        (ViewGroup) LayoutInflater.from(context).inflate(R.layout.media_picker_view, this, false);
-    addView(container);
-
-    GridView gridView = (GridView) container.findViewById(R.id.grid_view);
-    mAdapter = new MediaPickerAdapter(getActivity(), null, true);
-    gridView.setAdapter(mAdapter);
-
-    final LoaderManager loaderManager = getActivity().getLoaderManager();
+  public void startLoading() {
+    final LoaderManager loaderManager = mActivity.getLoaderManager();
     loaderManager.initLoader(LOADER_ID, null, this);
-
-    context.getContentResolver().registerContentObserver(
+    mActivity.getContentResolver().registerContentObserver(
         MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false,
-        new ContentObserver(getHandler()) {
+        new ContentObserver(mView.getHandler()) {
           @Override
           public void onChange(boolean selfChange) {
             loaderManager.getLoader(LOADER_ID).forceLoad();
           }
         });
-  }
-
-  private Activity getActivity() {
-    return (Activity) getContext();
   }
 
   @Override
@@ -74,7 +81,7 @@ public class MediaPickerView extends FrameLayout implements LoaderManager.Loader
     Uri queryUri = MediaStore.Files.getContentUri("external");
 
     return new CursorLoader(
-        getActivity(),
+        mActivity,
         queryUri,
         MEDIA_PROJECTION,
         selection,
